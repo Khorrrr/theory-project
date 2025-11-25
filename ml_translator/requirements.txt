@@ -1,0 +1,63 @@
+# ML Code Translator - Python Dependencies
+# Core ML and AI Libraries
+torch>=2.1.0
+transformers>=4.35.0
+tokenizers>=0.15.0
+numpy>=1.24.3
+scipy>=1.11.0
+
+# Web Server Framework
+flask>=2.3.3
+flask-cors>=4.0.0
+gunicorn>=21.2.0
+requests>=2.31.0
+
+# Data Processing and Validation
+pandas>=2.1.0
+pydantic>=2.5.0
+jsonschema>=4.20.0
+
+# Code Analysis and Processing
+ast>=3.8.0
+astroid>=3.0.0
+black>=23.0.0
+autopep8>=2.0.0
+isort>=5.12.0
+
+# Language Processing
+nltk>=3.8.0
+spacy>=3.7.0
+tree-sitter>=0.21.0
+
+# Development and Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-asyncio>=0.21.0
+coverage>=7.3.0
+
+# Logging and Monitoring
+structlog>=23.2.0
+prometheus-client>=0.19.0
+
+# Utilities
+python-dotenv>=1.0.0
+click>=8.1.0
+tqdm>=4.66.0
+colorama>=0.4.6
+rich>=13.7.0
+
+# Optional: GPU Support (uncomment if using NVIDIA GPUs)
+# torch-audio>=2.1.0
+# torchvision>=0.16.0
+
+# Optional: Additional Models (uncomment as needed)
+# diffusers>=0.24.0
+# accelerate>=0.25.0
+# bitsandbytes>=0.41.0
+# optimum>=1.16.0
+
+# Development Dependencies (optional)
+# jupyter>=1.0.0
+# ipython>=8.17.0
+# matplotlib>=3.8.0
+# seaborn>=0.13.0

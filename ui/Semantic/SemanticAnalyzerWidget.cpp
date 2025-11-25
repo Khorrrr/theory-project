@@ -12,6 +12,7 @@ SemanticAnalyzerWidget::SemanticAnalyzerWidget(QWidget *parent)
     semanticAnalyzer = new SemanticAnalyzer();
     codeGenerator = new CodeGenerator();
     lexer = new Lexer();
+    mlBridge = new MLTranslationBridge(this);
 
     setupUI();
     createConnections();
@@ -21,6 +22,7 @@ SemanticAnalyzerWidget::~SemanticAnalyzerWidget() {
     delete semanticAnalyzer;
     delete codeGenerator;
     delete lexer;
+    delete mlBridge;
 }
 
 void SemanticAnalyzerWidget::setAutomatonManager(AutomatonManager* manager) {
@@ -135,6 +137,31 @@ void SemanticAnalyzerWidget::setupUI() {
     QGroupBox* translateGroup = new QGroupBox("Code Translation");
     QVBoxLayout* translateLayout = new QVBoxLayout();
 
+    // Translation method selection
+    translationMethodGroup = new QGroupBox("Translation Method");
+    QVBoxLayout* methodLayout = new QVBoxLayout();
+    QHBoxLayout* radioLayout = new QHBoxLayout();
+
+    ruleBasedRadio = new QRadioButton("Rule-Based Generator");
+    mlBasedRadio = new QRadioButton("ML Translation");
+
+    // Set default selection
+    ruleBasedRadio->setChecked(true);
+
+    // Style radio buttons to match existing UI
+    QString radioStyle = "QRadioButton { font-size: 10pt; padding: 3px; }"
+                         "QRadioButton::indicator { width: 12px; height: 12px; }";
+    ruleBasedRadio->setStyleSheet(radioStyle);
+    mlBasedRadio->setStyleSheet(radioStyle);
+
+    radioLayout->addWidget(ruleBasedRadio);
+    radioLayout->addWidget(mlBasedRadio);
+    radioLayout->addStretch();
+    methodLayout->addLayout(radioLayout);
+    translationMethodGroup->setLayout(methodLayout);
+    translateLayout->addWidget(translationMethodGroup);
+
+    // Target language selection
     QHBoxLayout* langLayout = new QHBoxLayout();
     langLayout->addWidget(new QLabel("Target Language:"));
 
@@ -177,6 +204,16 @@ void SemanticAnalyzerWidget::createConnections() {
     connect(translateButton, &QPushButton::clicked, this, &SemanticAnalyzerWidget::onTranslateClicked);
     connect(clearButton, &QPushButton::clicked, this, &SemanticAnalyzerWidget::onClearClicked);
 
+    // Translation method radio button connections
+    connect(ruleBasedRadio, &QRadioButton::toggled, this, &SemanticAnalyzerWidget::onTranslationMethodChanged);
+    connect(mlBasedRadio, &QRadioButton::toggled, this, &SemanticAnalyzerWidget::onTranslationMethodChanged);
+
+    // ML bridge connections
+    connect(mlBridge, &MLTranslationBridge::translationCompleted, this, &SemanticAnalyzerWidget::displayTranslatedCode);
+    connect(mlBridge, &MLTranslationBridge::translationError, this, [this](const QString& error) {
+        statusLabel->setText(QString("❌ ML Translation Error: %1").arg(error));
+        statusLabel->setStyleSheet("QLabel { padding: 5px; background-color: #f8d7da; color: #721c24; border-radius: 3px; }");
+    });
 }
 
 
@@ -221,16 +258,29 @@ void SemanticAnalyzerWidget::onAnalyzeClicked() {
 void SemanticAnalyzerWidget::onTranslateClicked() {
     TargetLanguage targetLang = targetLanguageCombo->currentData().value<TargetLanguage>();
 
-    codeGenerator->setTokens(lexer->getTokens());
-    codeGenerator->setSymbolTable(semanticAnalyzer->getSymbolTable());
-    codeGenerator->setTargetLanguage(targetLang);
-    codeGenerator->setSourceCode(sourceCodeEdit->toPlainText()); // Pass original source
+    if (mlBasedRadio->isChecked()) {
+        // ML-based translation
+        statusLabel->setText("🔄 Translating with ML model...");
+        statusLabel->setStyleSheet("QLabel { padding: 5px; background-color: #fff3cd; color: #856404; border-radius: 3px; }");
 
-    QString translatedCode = codeGenerator->generate();
-    displayTranslatedCode(translatedCode);
+        QString sourceCode = sourceCodeEdit->toPlainText();
+        QString targetLanguageStr = targetLanguageCombo->currentText().toLower();
+        QVector<Token> tokens = lexer->getTokens();
 
-    statusLabel->setText(QString("✅ Code translated to %1").arg(targetLanguageCombo->currentText()));
-    statusLabel->setStyleSheet("QLabel { padding: 5px; background-color: #d4edda; color: #155724; border-radius: 3px; }");
+        mlBridge->translateCode(sourceCode, targetLanguageStr, tokens);
+    } else {
+        // Rule-based translation (existing logic)
+        codeGenerator->setTokens(lexer->getTokens());
+        codeGenerator->setSymbolTable(semanticAnalyzer->getSymbolTable());
+        codeGenerator->setTargetLanguage(targetLang);
+        codeGenerator->setSourceCode(sourceCodeEdit->toPlainText()); // Pass original source
+
+        QString translatedCode = codeGenerator->generate();
+        displayTranslatedCode(translatedCode);
+
+        statusLabel->setText(QString("✅ Code translated to %1 (Rule-Based)").arg(targetLanguageCombo->currentText()));
+        statusLabel->setStyleSheet("QLabel { padding: 5px; background-color: #d4edda; color: #155724; border-radius: 3px; }");
+    }
 }
 
 void SemanticAnalyzerWidget::onClearClicked() {
@@ -320,4 +370,14 @@ void SemanticAnalyzerWidget::displayErrorsWarnings() {
 
 void SemanticAnalyzerWidget::displayTranslatedCode(const QString& code) {
     translatedCodeEdit->setPlainText(code);
+}
+
+void SemanticAnalyzerWidget::onTranslationMethodChanged() {
+    if (mlBasedRadio->isChecked()) {
+        statusLabel->setText("ML Translation selected - Ensure ML server is running");
+        statusLabel->setStyleSheet("QLabel { padding: 5px; background-color: #cce5ff; color: #004085; border-radius: 3px; }");
+    } else {
+        statusLabel->setText("Rule-Based Generator selected");
+        statusLabel->setStyleSheet("QLabel { padding: 5px; background-color: #e9ecef; border-radius: 3px; }");
+    }
 }
