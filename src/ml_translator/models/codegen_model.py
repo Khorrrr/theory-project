@@ -36,11 +36,16 @@ class CodeGenModel(BaseTranslationModel):
         super().__init__(model_name)
         self.model = None
         self.tokenizer = None
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        if TRANSFORMERS_AVAILABLE:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = "cpu"  # Fallback mode doesn't need GPU
         self.max_length = 1024
-        self.temperature = 0.7
-        self.top_p = 0.95
-        self.top_k = 50
+        self.temperature = 0.3  # Lower temperature for more deterministic output
+        self.top_p = 0.9        # Lower top_p for more focused generation
+        self.top_k = 30         # Lower top_k for better control
+        self.repetition_penalty = 1.2  # Add repetition penalty
+        self.no_repeat_ngram_size = 3   # Add n-gram repetition prevention
 
         # Language-specific prompts
         self.translation_prompts = {
@@ -97,7 +102,11 @@ class CodeGenModel(BaseTranslationModel):
             # Load tokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(path)
             if self.tokenizer.pad_token is None:
-                self.tokenizer.pad_token = self.tokenizer.eos_token
+                # Add a proper pad token instead of reusing eos_token
+                if self.tokenizer.eos_token is not None:
+                    self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+                else:
+                    self.tokenizer.pad_token = self.tokenizer.eos_token
 
             # Load model
             self.model = AutoModelForCausalLM.from_pretrained(
@@ -144,20 +153,27 @@ class CodeGenModel(BaseTranslationModel):
             # Create prompt
             prompt = self.translation_prompts[target_language].format(code=source_code.strip())
 
-            # Tokenize input
-            inputs = self.tokenizer.encode(prompt, return_tensors="pt", truncation=True, max_length=self.max_length).to(self.device)
+            # Tokenize input with attention mask
+            inputs = self.tokenizer.encode(prompt, return_tensors="pt", truncation=True, max_length=self.max_length)
+            # Create attention mask
+            attention_mask = inputs.ne(self.tokenizer.pad_token_id).to(self.device)
+            inputs = inputs.to(self.device)
 
-            # Generate translation
+            # Generate translation with anti-repetition measures
             with torch.no_grad():
                 outputs = self.model.generate(
                     inputs,
-                    max_new_tokens=min(512, self.max_length - len(inputs[0])),
+                    attention_mask=attention_mask,  # Add attention mask
+                    max_new_tokens=min(256, self.max_length - len(inputs[0])),  # Reduced max tokens
                     temperature=self.temperature,
                     top_p=self.top_p,
                     top_k=self.top_k,
                     do_sample=True,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                    num_return_sequences=1
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    num_return_sequences=1,
+                    repetition_penalty=getattr(self, 'repetition_penalty', 1.2),
+                    no_repeat_ngram_size=getattr(self, 'no_repeat_ngram_size', 3)
                 )
 
             # Decode the generated text
@@ -165,6 +181,16 @@ class CodeGenModel(BaseTranslationModel):
 
             # Extract the translated code
             translated = self._extract_translation(generated_text, target_language)
+
+            # Validate the translation result
+            if not translated or len(translated.strip()) < 10:
+                logger.warning("ML translation produced empty or too short result, using fallback")
+                return self._fallback_translate(source_code, target_language)
+
+            # Check if translation contains obvious artifacts
+            if self._contains_obvious_artifacts(translated):
+                logger.warning("ML translation contains artifacts, using fallback")
+                return self._fallback_translate(source_code, target_language)
 
             # Set a reasonable confidence score
             self.set_confidence(0.85)
@@ -194,35 +220,104 @@ class CodeGenModel(BaseTranslationModel):
 
     def _extract_translation(self, generated_text: str, target_language: str) -> str:
         """Extract the actual translated code from generated text."""
-        # Look for the language label and extract everything after it
-        language_labels = {
-            "python": ["Python:", "Python code:", "Output:"],
-            "java": ["Java:", "Java code:", "Output:"],
-            "javascript": ["JavaScript:", "JavaScript code:", "JS:", "Output:"],
-            "assembly": ["Assembly:", "Assembly code:", "ASM:", "Output:"]
+        # Remove the original prompt first
+        prompt_end_markers = [
+            f"C++:\n",
+            f"\n\n{target_language.capitalize()}:",
+            f"\n\n{target_language}:"
+        ]
+
+        cleaned_text = generated_text
+        for marker in prompt_end_markers:
+            if marker in generated_text:
+                parts = generated_text.split(marker, 1)
+                if len(parts) > 1:
+                    cleaned_text = parts[1].strip()
+                    break
+
+        # Find the target language section
+        language_patterns = {
+            "python": [r"Python:\s*\n(.*?)(?=\n\n[A-Z]|\Z)", r"python:\s*\n(.*?)(?=\n\n[A-Z]|\Z)"],
+            "java": [r"Java:\s*\n(.*?)(?=\n\n[A-Z]|\Z)", r"java:\s*\n(.*?)(?=\n\n[A-Z]|\Z)"],
+            "javascript": [r"JavaScript:\s*\n(.*?)(?=\n\n[A-Z]|\Z)", r"javascript:\s*\n(.*?)(?=\n\n[A-Z]|\Z)"],
+            "assembly": [r"Assembly:\s*\n(.*?)(?=\n\n[A-Z]|\Z)", r"assembly:\s*\n(.*?)(?=\n\n[A-Z]|\Z)"],
         }
 
-        labels = language_labels.get(target_language, [f"{target_language.capitalize}:"])
+        patterns = language_patterns.get(target_language, [f"{target_language.capitalize()}:\\s*\\n(.*?)"])
 
-        for label in labels:
-            if label in generated_text:
-                # Find the label and extract everything after it
-                parts = generated_text.split(label, 1)
-                if len(parts) > 1:
-                    translated = parts[1].strip()
-                    # Remove any remaining prompt artifacts
-                    lines = translated.split('\n')
-                    clean_lines = []
-                    for line in lines:
-                        line = line.strip()
-                        if line and not line.startswith('C++:') and not line.startswith('Input:'):
-                            clean_lines.append(line)
-                    return '\n'.join(clean_lines)
+        for pattern in patterns:
+            match = re.search(pattern, cleaned_text, re.DOTALL | re.IGNORECASE)
+            if match:
+                translated = match.group(1).strip()
+                # Remove any remaining artifacts
+                return self._clean_translated_code(translated)
 
-        # If no clear separation found, return the latter part of the text
-        lines = generated_text.split('\n')
-        mid_point = len(lines) // 2
-        return '\n'.join(lines[mid_point:]).strip()
+        # Fallback: try to extract code-like content
+        return self._extract_code_like_content(cleaned_text)
+
+    def _clean_translated_code(self, code: str) -> str:
+        """Clean extracted code from common artifacts."""
+        lines = code.split('\n')
+        clean_lines = []
+
+        for line in lines:
+            line = line.strip()
+            # Skip artifact lines
+            if self._is_artifact_line(line):
+                continue
+            # Skip lines that look like other language sections
+            if any(lang in line.lower() for lang in ['c++:', 'java:', 'javascript:', 'python:', 'assembly:']):
+                continue
+            if line and not line.startswith('#') and not line.startswith('//'):
+                clean_lines.append(line)
+
+        return '\n'.join(clean_lines)
+
+    def _is_artifact_line(self, line: str) -> bool:
+        """Check if line is likely a generation artifact."""
+        artifact_patterns = [
+            'you can also do this',
+            'translation:',
+            'here is the',
+            'the following',
+            'generated code',
+            'this is the',
+            'class function',
+            'file = =tdout'  # Typo from model output
+        ]
+        line_lower = line.lower()
+        return any(pattern in line_lower for pattern in artifact_patterns)
+
+    def _extract_code_like_content(self, text: str) -> str:
+        """Extract code-like content when clear separation fails."""
+        lines = text.split('\n')
+        code_lines = []
+
+        for line in lines:
+            line = line.strip()
+            # Include lines that look like code (not prose)
+            if line and not any(phrase in line.lower() for phrase in [
+                'this is', 'here is', 'the following', 'you can', 'also do',
+                'translation', 'convert', 'transform'
+            ]):
+                # Check if it looks like code (has operators, assignments, etc.)
+                if re.search(r'[=+\-*/();{}\[\]]', line) or line.startswith(('def ', 'int ', 'float ', 'char ', 'bool ', 'if ', 'for ')):
+                    code_lines.append(line)
+
+        return '\n'.join(code_lines[:50])  # Limit to reasonable length
+
+    def _contains_obvious_artifacts(self, text: str) -> bool:
+        """Check if translated text contains obvious generation artifacts."""
+        artifact_indicators = [
+            'file = =tdout',  # Model typo
+            'translation:',
+            'you can also do this',
+            'class function',
+            'this is the',
+            'here is the'
+        ]
+        text_lower = text.lower()
+        return any(indicator in text_lower for indicator in artifact_indicators)
 
     def _cpp_to_python_fallback(self, cpp_code: str) -> str:
         """Simple C++ to Python fallback translation."""
