@@ -7,10 +7,14 @@
 #include <QPushButton>
 #include <QComboBox>
 #include <QLabel>
-#include "./src/utils/Semantic/SemanticAnalyzer.h"
-#include "./src/utils/Semantic/CodeGenerator.h"
-#include "./src/utils/LexicalAnalysis/Lexer.h"
-#include "./src/utils/LexicalAnalysis/AutomatonManager.h"
+#include <QRadioButton>
+#include <QGroupBox>
+#include <QButtonGroup>
+#include "../src/utils/Semantic/SemanticAnalyzer.h"
+#include "../src/utils/Semantic/CodeGenerator.h"
+#include "../src/utils/LexicalAnalysis/Lexer.h"
+#include "../src/utils/LexicalAnalysis/AutomatonManager.h"
+#include "../../utils/Semantic/MLTranslationBridge.h"
 
 #include <QCheckBox>
 
@@ -26,6 +30,11 @@ private:
 
     QComboBox* targetLanguageCombo;
 
+    // Translation method selection
+    QGroupBox* translationMethodGroup;
+    QRadioButton* ruleBasedRadio;
+    QRadioButton* mlBasedRadio;
+    QButtonGroup* translationMethodGroupButtons;
 
     QTableWidget* symbolTableWidget;
     QTextEdit* errorsWarningsText;
@@ -38,6 +47,7 @@ private:
     CodeGenerator* codeGenerator;
     Lexer* lexer;
     AutomatonManager* automatonManager;
+    MLTranslationBridge* mlBridge;
 
 public:
     explicit SemanticAnalyzerWidget(QWidget *parent = nullptr);
@@ -49,6 +59,7 @@ private slots:
     void onAnalyzeClicked();
     void onTranslateClicked();
     void onClearClicked();
+    void onTranslationMethodChanged();
 
 
 private:
