@@ -114,10 +114,16 @@ class CodeTokenizer:
 
     def _normalize_strings(self, code: str) -> str:
         """Normalize string literals for consistent processing."""
-        # This is a simplified approach - in production, you'd want more sophisticated handling
+        # First preserve character literals (single chars in single quotes)
+        code = re.sub(r"'([^'\\]|\\.)*'", '<CHAR_LITERAL>', code)
+
+        # Then handle longer strings
         for pattern in self.string_patterns:
-            # Replace string contents with placeholder to avoid model confusion
             code = re.sub(pattern, '<STRING>', code)
+
+        # Restore character literals with a representative example
+        code = code.replace('<CHAR_LITERAL>', "'A'")  # Preserve as example
+
         return code
 
     def _enhance_with_tokens(self, code: str, tokens: List[Dict[str, Any]]) -> str:
